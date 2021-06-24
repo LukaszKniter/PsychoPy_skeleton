@@ -1,253 +1,188 @@
-#!/usr/bin/env python
-# -*- coding: latin-1 -*-
-import atexit
-import codecs
-import csv
+from psychopy import visual, core, event, gui
 import random
-from os.path import join
-from statistics import mean
+import csv
+import os, sys
+from random import shuffle
+from pathlib import Path
+import codecs
 
-import yaml
-from psychopy import visual, event, logging, gui, core
-
-from misc.screen_misc import get_screen_res, get_frame_rate
-from itertools import combinations_with_replacement, product
-
-
-@atexit.register
-def save_beh_results():
-    """
-    Save results of experiment. Decorated with @atexit in order to make sure, that intermediate
-    results will be saved even if interpreter will broke.
-    """
-    with open(join('results', PART_ID + '_' + str(random.choice(range(100, 1000))) + '_beh.csv'), 'w', encoding='utf-8') as beh_file:
-        beh_writer = csv.writer(beh_file)
-        beh_writer.writerows(RESULTS)
-    logging.flush()
+# zmienne globalne
+N_TRIALS_TRAIN = 1
+N_TRIALS_EXP = 1
+hello_info = 'C:/Users/Laptop/Desktop/Informatyka projekt/welcome.txt'
+breake_info = "Przerwa, aby przejść do następnego bloku naciśnij spacje."
+aft_train_info = "Koniec treningu, nacinij spację, żeby przejsć do zadania."
+end_info = "Koniec, dziękujemy za udział w badaniu!"
+# lista z wynikami
+RESULTS = list()
+RESULTS.append(["IDENTYFIKATOR", "Plec", "Wiek", "EXPERIMENT"])
 
 
-def show_image(win, file_name, size, key='f7'):
-    """
-    Show instructions in a form of an image.
-    """
-    image = visual.ImageStim(win=win, image=file_name,
-                             interpolate=True, size=size)
-    image.draw()
-    win.flip()
-    clicked = event.waitKeys(keyList=[key, 'return', 'space'])
-    if clicked == [key]:
-        logging.critical(
-            'Experiment finished by user! {} pressed.'.format(key[0]))
-        exit(0)
-    win.flip()
+"""okno startowe w ktorym trzeba podac kilka danych, ID, plec, wiek, ono musi być na poczatku, bo 
+inaczej full screen win nam wszystko przysloni, podobno znany problem na forum"""
 
-
-def read_text_from_file(file_name, insert=''):
-    """
-    Method that read message from text file, and optionally add some
-    dynamically generated info.
-    :param file_name: Name of file to read
-    :param insert:
-    :return: message
-    """
-    if not isinstance(file_name, str):
-        logging.error('Problem with file reading, filename must be a string')
-        raise TypeError('file_name must be a string')
-    msg = list()
-    with codecs.open(file_name, encoding='utf-8', mode='r') as data_file:
-        for line in data_file:
-            if not line.startswith('#'):  # if not commented line
-                if line.startswith('<--insert-->'):
-                    if insert:
-                        msg.append(insert)
-                else:
-                    msg.append(line)
-    return ''.join(msg)
-
-
-def check_exit(key='f7'):
-    """
-    Check (during procedure) if experimentator doesn't want to terminate.
-    """
-    stop = event.getKeys(keyList=[key])
-    if stop:
-        abort_with_error(
-            'Experiment finished by user! {} pressed.'.format(key))
-
-
-def show_info(win, file_name, insert=''):
-    """
-    Clear way to show info message into screen.
-    :param win:
-    :return:
-    """
-    msg = read_text_from_file(file_name, insert=insert)
-    msg = visual.TextStim(win, color='black', text=msg,
-                          height=20, wrapWidth=SCREEN_RES['width'])
-    msg.draw()
-    win.flip()
-    key = event.waitKeys(keyList=['f7', 'return', 'space', 'left', 'right'])
-    if key == ['f7']:
-        abort_with_error(
-            'Experiment finished by user on info screen! F7 pressed.')
-    win.flip()
-
-
-def abort_with_error(err):
-    """
-    Call if an error occured.
-    """
-    logging.critical(err)
-    raise Exception(err)
-
-
-# GLOBALS
-
-RESULTS = list()  # list in which data will be colected
-RESULTS.append(['PART_ID', 'Trial_no', 'Reaction time', 'Correctness', '...']  # ... Results header
-
-def main():
-    global PART_ID  # PART_ID is used in case of error on @atexit, that's why it must be global
-
-    # === Dialog popup ===
-    info={'IDENTYFIKATOR': '', u'P\u0141EC': ['M', "K"], 'WIEK': '20'}
-    dictDlg=gui.DlgFromDict(
-        dictionary=info, title='Experiment title, fill by your name!')
-    if not dictDlg.OK:
+def poop_up():
+    info = {'IDENTYFIKATOR': '', u'P\u0141EC': ['M', "K"], 'WIEK': ''}
+    hello_dlg = gui.DlgFromDict(dictionary=info, title='Grupa Zero')
+    if not hello_dlg.OK:
         abort_with_error('Info dialog terminated.')
-
-    clock=core.Clock()
-    # load config, all params are there
-    conf=yaml.load(open('config.yaml', encoding='utf-8'))
-
-    # === Scene init ===
-    win=visual.Window(list(SCREEN_RES.values()), fullscr=False, monitor='testMonitor', units='pix',
-                                       screen=0, color=conf['BACKGROUND_COLOR'])
-    event.Mouse(visible=False, newPos=None, win=win)  # Make mouse invisible
-    FRAME_RATE=get_frame_rate(win)
-
-    # check if a detected frame rate is consistent with a frame rate for witch experiment was designed
-    # important only if milisecond precision design is used
-    if FRAME_RATE != conf['FRAME_RATE']:
-        dlg=gui.Dlg(title="Critical error")
-        dlg.addText(
-            'Wrong no of frames detected: {}. Experiment terminated.'.format(FRAME_RATE))
-        dlg.show()
-        return None
-
-    PART_ID=info['IDENTYFIKATOR'] + info[u'P\u0141EC'] + info['WIEK']
-    logging.LogFile(join('results', PART_ID + '.log'),
-                    level=logging.INFO)  # errors logging
-    logging.info('FRAME RATE: {}'.format(FRAME_RATE))
-    logging.info('SCREEN RES: {}'.format(SCREEN_RES.values()))
-
-    # === Prepare stimulus here ===
-    #
-    # Examples:
-    # fix_cross = visual.TextStim(win, text='+', height=100, color=conf['FIX_CROSS_COLOR'])
-    # que = visual.Circle(win, radius=conf['QUE_RADIUS'], fillColor=conf['QUE_COLOR'], lineColor=conf['QUE_COLOR'])
-    # stim = visual.TextStim(win, text='', height=conf['STIM_SIZE'], color=conf['STIM_COLOR'])
-    # mask = visual.ImageStim(win, image='mask4.png', size=(conf['STIM_SIZE'], conf['STIM_SIZE']))
-
-    # === Training ===
-
-    show_info(win, join('.', 'messages', 'hello.txt'))
-
-    trial_no += 1
-
-    show_info(win, join('.', 'messages', 'before_training.txt'))
-    csi_list=[conf['TRAINING_CSI']] * conf['NO_TRAINING_TRIALS'][1]
-    for csi in csi_list:
-        key_pressed, rt, ...=run_trial(win, conf, ...)
-        corr=...
-        RESULTS.append([PART_ID, trial_no, 'training', ...])
-
-        # it's often good presenting feedback in trening trials
-        feedb="Poprawnie" if corr else "Niepoprawnie"
-        feedb=visual.TextStim(win, text=feedb, height=50,
-                              color=conf['FIX_CROSS_COLOR'])
-        feedb.draw()
-        win.flip()
-        core.wait(1)
-        win.flip()
-
-        trial_no += 1
-        # === Experiment ===
-
-    show_info(win, join('.', 'messages', 'before_experiment.txt'))
-
-    for block_no in range(conf['NO_BLOCKS']):
-        for _ in range(conf['Trials in block'])
-            key_pressed, rt, ...=run_trial(win, conf, ...)
-            RESULTS.append([PART_ID, block_no, trial_no, 'experiment', ...])
-            trial_no += 1
-
-        show_image(win, os.path.join('.', 'images', 'break.jpg'),
-                   size=(SCREEN_RES['width'], SCREEN_RES['height']))
-
-        # === Cleaning time ===
-    save_beh_results()
-    logging.flush()
-    show_info(win, join('.', 'messages', 'end.txt'))
-    win.close()
+    list = [info['IDENTYFIKATOR'], info['PŁEC'], info['WIEK']]
+    RESULTS.append(list)
 
 
-def run_trial(win, ...):
-    """
-    Prepare and present single trial of procedure.
-    Input (params) should consist all data need for presenting stimuli.
-    If some stimulus (eg. text, label, button) will be presented across many trials.
-    Should be prepared outside this function and passed for .draw() or .setAutoDraw().
+poop_up()
 
-    All behavioral data (reaction time, answer, etc. should be returned from this function)
-    """
+# okno glowne
+win = visual.Window(units="pix", color="white", fullscr=True)
+# punkt fiksacji
+fix = visual.TextStim(win, text="+", color="black", height=40)
 
-    # === Prepare trial-related stimulus ===
-    # Randomise if needed
-    #
-    # Examples:
-    #
-    # que_pos = random.choice([-conf['STIM_SHIFT'], conf['STIM_SHIFT']])
-    # stim.text = random.choice(conf['STIM_LETTERS'])
-    #
+# sciezki do plikow w dwoch folderach happy i angry na dysku
+happypath = "C:/Users/Laptop/Desktop/Informatyka projekt/happy"
+happy_pictures = list(os.listdir(happypath))
+angrypath = "C:/Users/Laptop/Desktop/Informatyka projekt/angry"
+angry_pictures = list(os.listdir(angrypath))
 
-    # === Start pre-trial  stuff (Fixation cross etc.)===
 
-    # for _ in range(conf['FIX_CROSS_TIME']):
-    #    fix_cross.draw()
-    #    win.flip()
+# tworzy plik wynikowy
+def save_result():
+    with open("result.csv", "w", newline='', encoding='utf-8') as f:
+        write = csv.writer(f)
+        write.writerows(RESULTS)
 
-    # === Start trial ===
-    # This part is time-crucial. All stims must be already prepared.
-    # Only .draw() .flip() and reaction related stuff goes there.
+
+def happy_zgodny(happy_pictures):  # warunek happy zgodny, w srodku happy, po bokach happy
+    shuffle(happy_pictures)
+    center = happy_pictures[0]
+    left = happy_pictures[1]
+    right = happy_pictures[1]
+    happy1 = [left, center, right]
+    return happy1
+
+
+def angry_zgodny(angry_pictures):  # warunek angry zgodny, w srodku angry, po bokach angry
+    shuffle(angry_pictures)
+    center = angry_pictures[0]
+    left = angry_pictures[1]
+    right = angry_pictures[1]
+    angry1 = [left, center, right]
+    return angry1
+
+
+def angry_niezgodny(angry_pictures, happy_pictures):  # warunek angry niezgodny, w srodku angry, po bokach happy
+    shuffle(angry_pictures)
+    shuffle(happy_pictures)
+    center = angry_pictures[0]
+    left = happy_pictures[1]
+    right = happy_pictures[1]
+    angry2 = [left, center, right]
+    return angry2
+
+
+def happy_niezgodny(angry_pictures, happy_pictures):  # warunek happy niezgodny, w srodku happy, po bokach angry
+    shuffle(angry_pictures)
+    shuffle(happy_pictures)
+    center = happy_pictures[0]
+    left = angry_pictures[1]
+    right = angry_pictures[1]
+    happy2 = [left, center, right]
+    return happy2
+
+
+def createBlock():  # tworzenie listy z osmioma warunkami, kazdy z 4 podwojnie na koncu liste mieszamy
+    block = [happy_zgodny(happy_pictures),
+             happy_zgodny(happy_pictures),
+             angry_zgodny(angry_pictures),
+             angry_zgodny(angry_pictures),
+             angry_niezgodny(angry_pictures, happy_pictures),
+             angry_niezgodny(angry_pictures, happy_pictures),
+             happy_niezgodny(angry_pictures, happy_pictures),
+             happy_niezgodny(angry_pictures, happy_pictures)]
+    shuffle(block)
+    return block
+
+""" funckja, ktora wyswietla jeden blok, pctureset to zmienna zadeklarowana przez nas, trial1_center to jakas
+zmienna i wskazanie sciezki do niej z listy pictureset (tej listy nie mamy w ogole w programie, uzywamy jej tylko tutaj,
+prawdziwe dane wskazemy pozniej w petli!, na koncu tworzymy 3 zmienne, do ktorej trafiaja nasze pliki i te zmienne sa 
+wyswietlane w oknie win"""
+
+def displaySet(picturesSet):
+    trial1_center = os.path.abspath(picturesSet[1])
+    trial1_left = os.path.abspath(picturesSet[0])
+    trial1_right = os.path.abspath(picturesSet[2])
+
+    srodek = visual.ImageStim(win, image=trial1_center, pos=(0.0, 0.0), size=[300, 377], colorSpace='rgb')
+    lewy = visual.ImageStim(win, image=trial1_left, pos=(-310.0, 0.0), size=[300, 377], colorSpace='rgb')
+    prawy = visual.ImageStim(win, image=trial1_right, pos=(310.0, 0.0), size=[300, 377], colorSpace='rgb')
+    fix.draw()
+    win.flip()
+    core.wait(0.2)
+    srodek.draw()
+    prawy.draw()
+    lewy.draw()
+    win.flip()
+    core.wait(0.2)
+
+
+# Julia: to nie jestem do końca pewna, jak działa, ale przydaje się w show_text i pewnie przyda się przy reakcjach prawa/lewa
+def reactions(keys):
     event.clearEvents()
-    # make sure, that clock will be reset exactly when stimuli will be drawn
-    win.callOnFlip(clock.reset)
+    key = event.waitKeys(keyList=keys)
+    return key[0]
 
-    for _ in range(conf['STIM_TIME']):  # present stimuli
-        reaction=event.getKeys(keyList=list(
-            conf['REACTION_KEYS']), timeStamped=clock)
-        if reaction:  # break if any button was pressed
-            break
-        stim.draw()
-        win.flip()
 
-    if not reaction:  # no reaction during stim time, allow to answer after that
-        question_frame.draw()
-        question_label.draw()
-        win.flip()
-        reaction=event.waitKeys(keyList=list(
-            conf['REACTION_KEYS']), maxWait=conf['REACTION_TIME'], timeStamped=clock)
-    # === Trial ended, prepare data for send  ===
-    if reaction:
-        key_pressed, rt=reaction[0]
-    else:  # timeout
-        key_pressed='no_key'
-        rt=-1.0
+def show_text(win, info, wait_key=["space"]):
+    info.draw()
+    win.flip()
+    reactions(wait_key)
 
-    return key_pressed, rt  # return all data collected during trial
 
-if __name__ == '__main__':
-    PART_ID=''
-    SCREEN_RES=get_screen_res()
-    main()
+def hello_text():
+    text_file = codecs.open(hello_info, encoding='utf-8').read()
+    show_text(win, info=visual.TextStim(win, text=text_file, pos=(0.0, 0.0), color="black"))
+
+
+def breake():
+    show_text(win, info=visual.TextStim(win, text=breake_info, pos=(0.0, 0.0), color="black"))
+
+
+def after_training():
+    show_text(win, info=visual.TextStim(win, text=aft_train_info, pos=(0.0, 0.0), color="black"))
+
+
+def end():
+    img = visual.TextStim(win, text=end_info, pos=(0.0, 0.0), color="black")
+    img.draw()
+    win.flip()
+    core.wait(1)
+
+
+"""model eksperymentu - dla 'exp=False' robi trening, jeśli trening ma więcej, niż 1 blok, to pomiędzy blokami 
+robi przerwę, a po ostatnim mówi, że pora na eksperyment dla 'exp = True' robi eksperyment z przerwami i informacją 
+o zakończeniu po ostatnim bloku"""
+
+
+def part_of_exp(n_trials, exp):
+    for i in range(n_trials):
+        for picturesSet in createBlock():
+            displaySet(picturesSet)
+        if exp == True:
+            if i < (N_TRIALS_EXP - 1):
+                breake()
+            else:
+                end()
+        else:
+            if i < (N_TRIALS_TRAIN - 1):
+                breake()
+            else:
+                after_training()
+        RESULTS.append([i + 1, exp])  # dodaje wyniki do pliku wynikowego
+
+
+hello_text()
+part_of_exp(N_TRIALS_TRAIN, exp=False)
+part_of_exp(N_TRIALS_EXP, exp=True)
+save_result()
+
+win.flip()
+win.close()
